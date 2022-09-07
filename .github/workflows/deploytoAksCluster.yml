@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: acrtrellis.azurecr.io
+        username: ${{ secrets.acr_acrtrellis_username }}
+        password: ${{ secrets.acr_acrtrellis_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/mediawiki" -f  "mediawiki" -t acrtrellis.azurecr.io/trellis:${{ github.sha }} --label dockerfile-path=mediawiki
+        docker push acrtrellis.azurecr.io/trellis:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_trellis_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep trellisaa04 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace trellisaa04`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: trellisaa04
+        container-registry-url: acrtrellis.azurecr.io
+        container-registry-username: ${{ secrets.acr_acrtrellis_username }}
+        container-registry-password: ${{ secrets.acr_acrtrellis_password }}
+        secret-name: trellisdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: trellisaa04
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          acrtrellis.azurecr.io/trellis:${{ github.sha }}
+        imagepullsecrets: |
+          trellisdockerauth
